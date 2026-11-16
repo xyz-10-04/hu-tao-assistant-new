@@ -216,4 +216,8 @@ streamlit run app.py
 # 跑检索评测 / 消融实验
 python eval/run_retrieval_eval.py
 python eval/run_ablation.py
+
+# 可视化检索链路：把 BM25 → 向量 → RRF → 精排 每一步的中间结果打出来
+# 不需要 API Key，能直接看到每一路召回了什么、融合后名次怎么变、精排怎么重排
+python scripts/demo_retrieval.py "胡桃喜欢吃什么"
 ```
