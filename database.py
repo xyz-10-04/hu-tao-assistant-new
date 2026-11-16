@@ -1,11 +1,18 @@
 import os
+from pathlib import Path
 from typing import Generator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-# 创建数据库引擎（使用 SQLite）
-DATABASE_URL = "sqlite:///./hutao.db"  # 会在项目根目录生成 hutao.db 文件
+# 路径基于本文件位置，而不是当前工作目录——
+# 否则从别的目录启动 uvicorn，数据库会被建到那个目录去，表现为"数据莫名其妙没了"
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "hutao.db"
+
+# 用 as_posix() 把 Windows 反斜杠转成正斜杠，SQLAlchemy 的 URL 更认这个
+DATABASE_URL = f"sqlite:///{DB_PATH.as_posix()}"
+
 # echo=True 会把每条 SQL 都打到日志里，调试时用 SQL_ECHO=1 打开
 engine = create_engine(DATABASE_URL, echo=os.getenv("SQL_ECHO") == "1")
 

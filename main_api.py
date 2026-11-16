@@ -1,5 +1,6 @@
 import json
 import logging
+import pathlib
 import threading
 import time
 import uuid
@@ -21,8 +22,11 @@ from tools_api import calculate, get_current_time, read_notes, roll_dice, save_n
 logger = logging.getLogger("huTao")   # "huTao" 可以改成你喜欢的名字，但不是必须改
 logger.setLevel(logging.INFO)   # 这一行保留，它控制了日志级别
 
+# 日志路径同样基于本文件位置，避免从别的目录启动时日志写到别处
+LOG_PATH = pathlib.Path(__file__).resolve().parent / "huTao.log"
+
 # 文件处理器（轮转）
-file_handler = RotatingFileHandler("huTao.log", maxBytes=10*1024*1024, backupCount=5)
+file_handler = RotatingFileHandler(LOG_PATH, maxBytes=10*1024*1024, backupCount=5, encoding="utf-8")
 file_handler.setLevel(logging.INFO)
 
 # 控制台处理器
