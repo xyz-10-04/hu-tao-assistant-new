@@ -46,9 +46,30 @@ class TestSafeEval(unittest.TestCase):
         with self.assertRaises(ValueError):
             safe_eval("1+" * 60 + "1")
 
+    def test_rejects_bool_literal(self):
+        # bool 是 int 的子类，不显式排除会让 "只允许数字" 形同虚设
+        for payload in ["True+True", "True*999", "False+1"]:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValueError):
+                    safe_eval(payload)
+
+    def test_rejects_float_overflow(self):
+        # 浮点溢出不会抛异常，会静默变成 inf；inf 进 json.dumps 会产出
+        # 非标准的 Infinity，前端 JSON.parse 直接失败
+        for payload in ["1e309", "-1e309", "1e308*10"]:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValueError):
+                    safe_eval(payload)
+
+    def test_accepts_hex_and_underscore_literals(self):
+        # 这两个是合法数字字面量，不应该误伤
+        self.assertEqual(safe_eval("0x10"), 16)
+        self.assertEqual(safe_eval("1_000_000"), 1000000)
+
     def test_calculate_formats_integral_float_as_int(self):
         self.assertEqual(calculate("4/2"), "2")
         self.assertEqual(calculate("1/3")[:4], "0.33")
+        self.assertTrue(calculate("1e309").startswith("错误"))
 
 
 if __name__ == "__main__":
