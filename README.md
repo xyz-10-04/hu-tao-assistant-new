@@ -3,6 +3,10 @@
 ## 📖 项目简介
 基于混合检索（BM25 + 向量检索）与 ReAct Agent 架构的原神角色问答系统。项目脱离了纯框架依赖，从零手写了 BM25、RRF 融合算法以及安全的 AST 求值器，并引入了 BGE-Reranker 精排，通过自建评测集完成了 RAG 链路的量化调优。
 
+![系统架构](docs/images/architecture.png)
+
+**一句话看懂**：前端提问 → FastAPI 校验 → Agent 决定是否调工具 → 检索四步（BM25 / 向量 / RRF 融合 / 精排）→ 大模型基于检索结果作答 → SSE 流式吐字。
+
 ## 🛠 技术栈
 - **核心语言**：Python 3.10+
 - **大模型 API**：DeepSeek API (通过 langchain-openai 接入)
@@ -28,6 +32,8 @@
 5. 检索结果与用户问题拼接，交回大模型生成最终回答（ReAct 循环设有最大步数限制）。
 
 ## 📊 消融实验（20 条评测集 / 全量索引 / k=5）
+
+![消融实验结果](docs/images/ablation.png)
 
 | 配置 | Recall@1 | Recall@3 | Recall@5 | 平均延迟 |
 | --- | --- | --- | --- | --- |
