@@ -1,0 +1,12 @@
+# Streamlit 运行配置
+#
+# toolbarMode = "minimal"：隐藏右上角的 Deploy / 开发者工具条。
+# 不藏的话，截图和演示时会露出 "Deploy" 按钮，看起来像没做完的半成品。
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true
