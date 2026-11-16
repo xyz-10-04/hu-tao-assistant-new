@@ -1,15 +1,19 @@
-import streamlit as st
-import requests
+import json
+import os
 
-# FastAPI 后端地址
-API_URL = "http://localhost:8000/chat"
+import requests
+import streamlit as st
+
+# FastAPI 后端地址（部署时用环境变量覆盖，不用改代码）
+BASE_URL = os.getenv("HUATAO_API_BASE", "http://localhost:8000")
+API_URL = f"{BASE_URL}/chat"
 
 st.title("胡桃助手")
 st.caption("往生堂第七十七代堂主，为你服务")
 
 
 def stream_chat(message, history):
-    url = "http://localhost:8000/chat/stream"
+    url = f"{BASE_URL}/chat/stream"
     try:
         response = requests.post(url, json={"message": message, "history": history}, stream=True, timeout=120)
         
@@ -26,13 +30,19 @@ def stream_chat(message, history):
             return
 
         for line in response.iter_lines():
-            if line:
-                decoded = line.decode('utf-8')
-                if decoded.startswith("data: "):
-                    content = decoded[6:]
-                    if content == "[DONE]":
-                        break
-                    yield content
+            if not line:
+                continue
+            decoded = line.decode("utf-8")
+            if not decoded.startswith("data: "):
+                continue
+            content = decoded[6:]
+            if content == "[DONE]":
+                break
+            # 后端用 JSON 包装每个增量，这样正文里的换行不会被 SSE 的分行规则吃掉
+            try:
+                yield json.loads(content)
+            except json.JSONDecodeError:
+                yield content
     except Exception as e:
         yield f"连接失败: {e}"
 
@@ -41,14 +51,14 @@ with st.sidebar:
     
     if st.button("🎲 掷骰子"):
         # 发送请求到 /roll
-        response = requests.get("http://localhost:8000/roll")
+        response = requests.get(f"{BASE_URL}/roll")
         if response.status_code == 200:
             st.success(f"🎯 结果：{response.json()['result']}")
         else:
             st.error("请求失败")
     
     if st.button("🕐 获取时间"):
-        response = requests.get("http://localhost:8000/time")
+        response = requests.get(f"{BASE_URL}/time")
         if response.status_code == 200:
             st.info(f"🕒 {response.json()['time']}")
         else:
@@ -56,14 +66,19 @@ with st.sidebar:
     
     # 计算器需要输入框
     st.subheader("🧮 计算器")
-    expr = st.text_input("输入算式（如 3*8）")
+    expr = st.text_input("输入算式（如 (3+8)*2）")
     if st.button("计算"):
         if expr:
-            response = requests.get(f"http://localhost:8000/calc?expr={expr}")
+            # 用 POST 传 body：把算式塞进 query string 时，'+' 会被服务端解码成空格，
+            # 导致 "3+8" 直接报错（这是旧版本的 bug）
+            response = requests.post(f"{BASE_URL}/calc", json={"expr": expr})
             if response.status_code == 200:
                 st.write(f"✅ 结果：{response.json()['result']}")
             else:
-                st.error("计算失败")
+                try:
+                    st.error(f"计算失败：{response.json().get('detail', '')}")
+                except Exception:
+                    st.error(f"计算失败（{response.status_code}）")
 
     # 笔记管理
     st.subheader("📝 笔记")
@@ -71,7 +86,7 @@ with st.sidebar:
     if st.button("保存笔记"):
         if note_content:
             response = requests.post(
-                "http://localhost:8000/note",
+                f"{BASE_URL}/note",
                 params={"content": note_content}
             )
             if response.status_code == 200:
@@ -82,7 +97,7 @@ with st.sidebar:
             st.warning("请输入笔记内容")
 
     if st.button("📖 查看所有笔记"):
-        response = requests.get("http://localhost:8000/notes")
+        response = requests.get(f"{BASE_URL}/notes")
         if response.status_code == 200:
             notes = response.json().get("notes", [])
             if notes:

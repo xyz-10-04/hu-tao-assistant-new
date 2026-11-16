@@ -1,20 +1,18 @@
-from fastapi import FastAPI, Query, HTTPException
-from tools_api import roll_dice, get_current_time, calculate, save_note, read_notes
-from memory import load_memory, save_memory
-
-from pydantic import BaseModel, Field
-from fastapi import FastAPI
-from main import agent
-
-from fastapi.responses import StreamingResponse
-
-import time
-
+import json
 import logging
-from logging.handlers import RotatingFileHandler
+import time
 import uuid
+from logging.handlers import RotatingFileHandler
 
-from langchain_core.messages import HumanMessage, AIMessage
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from langchain_core.messages import AIMessage, HumanMessage
+from pydantic import BaseModel, Field
+
+from main import agent
+from memory import load_memory, save_memory
+from tools_api import calculate, get_current_time, read_notes, roll_dice, save_note
 
 # 创建 logger
 logger = logging.getLogger("huTao")   # "huTao" 可以改成你喜欢的名字，但不是必须改
@@ -52,13 +50,33 @@ async def api_roll():
 async def api_time():
     return {"time": get_current_time()}
 
+@app.get("/health")
+async def api_health():
+    """给部署/监控用的健康检查：不触发模型加载，能秒回。"""
+    return {"status": "ok", "service": "hutao-assistant"}
+
+
+def _calc_result(expr: str):
+    result = calculate(expr)
+    # calculate 把异常吞成了字符串，这里翻译成规范的 4xx，前端才能区分“算错”和“服务挂了”
+    if isinstance(result, str) and result.startswith("错误"):
+        raise HTTPException(status_code=400, detail=result.split("：", 1)[-1])
+    return {"result": result}
+
+
+class CalcRequest(BaseModel):
+    expr: str = Field(..., min_length=1, max_length=100, description="算式，如 (3+8)*2")
+
+
 @app.get("/calc")
-async def api_calc(expr: str = Query(...)):
-    try:
-        result = calculate(expr)
-        return {"result": result}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+async def api_calc(expr: str = Query(..., min_length=1, max_length=100)):
+    return _calc_result(expr)
+
+
+@app.post("/calc")
+async def api_calc_post(request: CalcRequest):
+    """推荐用 POST：算式放在 body 里，不会被 URL 编码把 '+' 变成空格。"""
+    return _calc_result(request.expr)
 
 @app.post("/note")
 async def api_save_note(content: str):
@@ -93,6 +111,26 @@ async def api_update_memory(update: MemoryUpdate):
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=500, description="用户输入的消息")
     history: list = Field(default_factory=list, description="历史对话记录，格式为 [{'role': 'user', 'content': '...'}, {'role': 'assistant', 'content': '...'}]")
+
+
+def _text_of(content):
+    """从 chunk.content 里取出纯文本。
+
+    新版 langchain 的 content 可能是 str，也可能是 [{'type': 'text', 'text': ...}] 这样的块列表，
+    直接 f-string 会把列表的 repr 打进前端，这里统一成字符串。
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "".join(parts)
+    return "" if content is None else str(content)
+
 
 import asyncio
 
@@ -135,10 +173,10 @@ async def chat_endpoint(request: ChatRequest):
     
     except asyncio.TimeoutError:
         logger.warning(f"[{request_id}] 请求超时: {request.message[:30]}...")
-        return {"error": "请求超时，请稍后再试"}
+        raise HTTPException(status_code=504, detail="请求超时，请稍后再试")
     except Exception as e:
         logger.error(f"[{request_id}] 处理请求失败: {e}")
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/chat/stream")
@@ -149,7 +187,7 @@ async def chat_stream_endpoint(request: ChatRequest):
 
     if len(request.message) > 500:
         async def error_stream():
-            yield f"data: 输入过长，请缩短后再试\n\n"
+            yield f"data: {json.dumps('输入过长，请缩短后再试', ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
         return StreamingResponse(error_stream(), media_type="text/event-stream")
 
@@ -177,21 +215,26 @@ async def chat_stream_endpoint(request: ChatRequest):
             ):
                 if event["event"] == "on_chat_model_stream":
                     chunk = event["data"]["chunk"]
-                    if chunk.content:
-                        yield f"data: {chunk.content}\n\n"
+                    text = _text_of(chunk.content)
+                    if text:
+                        # 用 JSON 包装增量：正文里的换行交给 json 转义，
+                        # 不会因为 SSE 按行分帧而丢掉（旧版会把多段回答挤成一段）
+                        yield f"data: {json.dumps(text, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error(f"[{request_id}] 流式处理失败: {e}")
-            yield f"data: 处理失败: {str(e)}\n\n"
+            yield f"data: {json.dumps('处理失败: ' + str(e), ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
             
     return StreamingResponse(generate(), media_type="text/event-stream")
-  
-from fastapi.middleware.cors import CORSMiddleware
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 开发环境允许所有来源
-    allow_credentials=True,
+    # 注意：allow_origins=["*"] 与 allow_credentials=True 是浏览器会直接拒绝的非法组合，
+    # 需要携带 cookie 时请把 origins 收窄成具体域名。
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

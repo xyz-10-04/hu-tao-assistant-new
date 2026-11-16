@@ -46,10 +46,8 @@ agent = create_agent(
     system_prompt=system_prompt
 ).with_config({"recursion_limit": 20}) 
 
-print("工具助手已启动，输入 exit 或 quit 退出")
-
-
 if __name__ == "__main__":
+    print("工具助手已启动，输入 exit 或 quit 退出")
     history = []
 
     while True:
