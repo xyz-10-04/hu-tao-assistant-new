@@ -85,6 +85,34 @@ class TestRRFFusion(unittest.TestCase):
                          [d for d, _ in rrf_fusion([[("x", 0.1), ("y", 0.0)],
                                                     [("y", 0.5), ("x", 0.4)]])])
 
+    def test_k_must_be_positive(self):
+        # rank 从 0 开始，k=0 时首名权重是 1/(0+0)，会除零
+        with self.assertRaises(ValueError):
+            rrf_fusion([[("a", 0.0)]], k=0)
+
+    def test_same_list_twice_scales_scores_but_keeps_order(self):
+        """同一路重复传：分数翻倍，排序不变——RRF 只关心相对顺序。"""
+        lst = [("x", 0.0), ("y", 0.0), ("z", 0.0)]
+        one = dict(rrf_fusion([lst]))
+        two = dict(rrf_fusion([lst, lst]))
+        for doc_id in one:
+            self.assertAlmostEqual(two[doc_id], one[doc_id] * 2)
+        self.assertEqual([d for d, _ in rrf_fusion([lst])],
+                         [d for d, _ in rrf_fusion([lst, lst])])
+
+    def test_duplicate_docid_in_one_list_accumulates(self):
+        """同一路内部重复的 doc_id 会被累加，等于人为抬高，上游必须去重。"""
+        scores = dict(rrf_fusion([[("a", 0.0), ("a", 0.0), ("b", 0.0)]], k=60))
+        self.assertAlmostEqual(scores["a"], 1 / 60 + 1 / 61)
+        self.assertAlmostEqual(scores["b"], 1 / 62)
+
+    def test_tie_breaks_by_first_list_order(self):
+        """两路互为逆序时得分相同，稳定排序会让第一个列表的靠前项胜出。"""
+        out = rrf_fusion([[("x", 0.0), ("y", 0.0)], [("y", 0.0), ("x", 0.0)]])
+        scores = dict(out)
+        self.assertAlmostEqual(scores["x"], scores["y"])
+        self.assertEqual(out[0][0], "x")  # 来自第一个列表
+
 
 if __name__ == "__main__":
     unittest.main()
