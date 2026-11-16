@@ -149,9 +149,10 @@ python eval/refine_answer_eval.py         # 重算统计、生成人工评分表
 
 ## ✅ 测试
 
-
-
 ```bash
+# 先装开发依赖（httpx 供 TestClient 用，Pillow 供生成配图用）
+pip install -r requirements-dev.txt
+
 # 全量（需要本地模型，约 20s）
 python -m unittest discover -s tests -t . -v
 
@@ -182,6 +183,9 @@ venv\Scripts\activate  # Windows
 
 # 安装依赖
 pip install -r requirements.txt
+
+# 想跑测试或重新生成配图，再装开发依赖
+pip install -r requirements-dev.txt
 ```
 
 ### 2. 模型与环境变量

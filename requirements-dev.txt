@@ -1,0 +1,16 @@
+# 开发与测试所需的额外依赖（运行时不需要）
+#
+# 安装：pip install -r requirements-dev.txt
+#
+# 为什么单独一份：
+#   下面两个包只服务于「跑测试」和「重新生成 README 配图」，
+#   运行时（uvicorn / streamlit）完全用不到。混进 requirements.txt
+#   会让部署镜像无谓变大。
+
+-r requirements.txt
+
+# fastapi.testclient 依赖它；不装的话 tests/test_api.py 会在 import 阶段就失败
+httpx==0.28.1
+
+# scripts/make_figures.py 用它绘制架构图与消融柱状图
+Pillow==12.3.0
