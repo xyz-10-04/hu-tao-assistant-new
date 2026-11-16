@@ -1,0 +1,24 @@
+name: unit-tests
+
+# 只跑「不依赖模型、不依赖 API Key」的单元测试。
+# 检索/接口测试需要本地 BGE 模型（3GB）和密钥，放在本地跑：
+#   python -m unittest discover -s tests -t . -v
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装最小依赖
+        run: pip install jieba python-dotenv
+
+      - name: 运行纯逻辑测试（分词 / BM25 / RRF / AST 求值器）
+        run: python -m unittest tests.test_bm25 tests.test_utils -v

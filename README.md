@@ -52,7 +52,30 @@
 6. **doc_id 依赖切分上下文**：早期 `doc_id = f"{文件名}_{批次内全局序号}"`，同一块内容在"全量切分"和"分类切分"下编号不同，甚至出现 `他人对胡桃的评价_25` 实际指向另一个文件的情况。改为"文件名 + 文件内序号"后编号与上下文无关，并加了索引/知识库一致性护栏。
 7. **启动耗时 80s → 4s**：embedding 与 reranker 原本在 `import` 阶段加载，导致 uvicorn 冷启动要等 70 多秒。改为懒加载 + 索引/BM25 进程内缓存后，`import rag_build` 从 76s 降到 0.09s，`import main_api` 从 80s 降到 4s，单次检索也不再重复构建 BM25。
 
+## ✅ 测试
+
+```bash
+# 全量（需要本地模型，约 20s）
+python -m unittest discover -s tests -t . -v
+
+# 只跑纯逻辑测试（无需模型/密钥，CI 里跑的就是这批）
+python -m unittest tests.test_bm25 tests.test_utils -v
+```
+
+| 测试文件 | 覆盖内容 | 依赖 |
+| --- | --- | --- |
+| `tests/test_bm25.py` | jieba 分词过滤、TF/DF 计数、BM25 打分与排序、RRF 公式（`1/(k+rank)`）与"分数被忽略"语义 | 仅 jieba |
+| `tests/test_utils.py` | AST 求值器：四则/取余/整除、除零、拒绝 `**`、拒绝代码注入、超长表达式 | 无 |
+| `tests/test_api.py` | `/health` `/roll` `/time`、`/calc` 的 GET+POST 与 400 语义、`/chat` 的 422 校验 | FastAPI |
+| `tests/test_retrieval.py` | 返回条数、doc_id 必须存在于当前切分、结果确定性、**doc_id 跨批次稳定性回归**、已知样本必命中 | BGE 模型 |
+
+共 **34 个用例**，全绿。其中 `test_doc_id_is_stable_across_batches` 是专门为前面那个 doc_id 错位 bug 写的回归测试——
+以后谁再把序号改成批次内全局序号，这条会立刻红。
+
+CI：`.github/workflows/ci.yml`，push/PR 时自动跑不依赖模型的那两批。
+
 ## 🚀 快速复现指南
+
 ### 1. 环境准备
 ```bash
 # 创建虚拟环境并激活
