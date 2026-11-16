@@ -1,7 +1,9 @@
 import json
 import logging
+import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI, HTTPException, Query
@@ -12,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from main import agent
 from memory import load_memory, save_memory
+from rag_build import get_embedding_model, get_reranker
 from tools_api import calculate, get_current_time, read_notes, roll_dice, save_note
 
 # 创建 logger
@@ -37,10 +40,39 @@ logger.addHandler(console_handler)
 
 # 然后你就可以在代码中使用 logger.info(...)、logger.error(...) 等
 
+_models_ready = threading.Event()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """启动后用一个后台线程预热模型。
+
+    懒加载把启动时间从 80s 压到了 4s，但代价是「第一个检索请求」要自己承担 ~10s 的
+    模型加载（实测冷启动后第一个 RAG 请求 13.97s，第二个回到 3.8s）。
+    预热线程把这个成本从「第一个用户」挪到「服务启动后的空闲时间」。
+
+    注意配套：`/health` 会返回 models_ready，负载均衡器应该等它为 true 再导流，
+    否则用户会撞在预热上——实测这种情况下请求要等 22s，比不预热还慢。
+    """
+    def _warm_up():
+        try:
+            started = time.time()
+            get_embedding_model()
+            get_reranker()
+            _models_ready.set()
+            logger.info(f"模型预热完成，耗时 {time.time() - started:.1f}s")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"模型预热失败（不影响服务，首个检索请求会变慢）: {exc}")
+
+    threading.Thread(target=_warm_up, name="model-warmup", daemon=True).start()
+    yield
+
+
 app = FastAPI(
     title="胡桃助手API",
     description="往生堂第七十七代堂主胡桃为你服务——掷骰子、查时间、算算术、记笔记，样样精通。",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 @app.get("/roll")
 async def api_roll():
@@ -52,8 +84,16 @@ async def api_time():
 
 @app.get("/health")
 async def api_health():
-    """给部署/监控用的健康检查：不触发模型加载，能秒回。"""
-    return {"status": "ok", "service": "hutao-assistant"}
+    """健康检查 + 就绪探针。
+
+    status 表示进程活着；models_ready 表示模型已加载完、可以接检索请求。
+    负载均衡器应该等 models_ready=true 再导流。
+    """
+    return {
+        "status": "ok",
+        "service": "hutao-assistant",
+        "models_ready": _models_ready.is_set(),
+    }
 
 
 def _calc_result(expr: str):
